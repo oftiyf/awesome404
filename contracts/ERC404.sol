@@ -7,6 +7,7 @@ import {IERC404} from "./interfaces/IERC404.sol";
 import {DoubleEndedQueue} from "./lib/DoubleEndedQueue.sol";
 import {ERC721Events} from "./lib/ERC721Events.sol";
 import {ERC20Events} from "./lib/ERC20Events.sol";
+import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 
 abstract contract ERC404 is IERC404 {
   using DoubleEndedQueue for DoubleEndedQueue.Uint256Deque;
@@ -71,6 +72,21 @@ abstract contract ERC404 is IERC404 {
 
   /// @dev Constant for token id encoding
   uint256 public constant ID_ENCODING_PREFIX = 1 << 255;
+
+  /// @dev Storage for each NFT's deposits
+  struct TokenDeposit {
+    address tokenAddress;  // ERC20 代币地址
+    uint256 amount;       // 存入数量
+  }
+
+  /// @dev NFT ID => 代币存款映射
+  mapping(uint256 => TokenDeposit[]) private _tokenDeposits;
+
+  /// @dev Event for tokens deposited
+  event TokensDeposited(uint256 indexed tokenId, address indexed tokenAddress, uint256 amount);
+
+  /// @dev Event for tokens withdrawn
+  event TokensWithdrawn(uint256 indexed tokenId, address indexed tokenAddress, uint256 amount);
 
   constructor(string memory name_, string memory symbol_, uint8 decimals_) {
     name = name_;
@@ -214,9 +230,8 @@ abstract contract ERC404 is IERC404 {
     emit ERC721Events.ApprovalForAll(msg.sender, operator_, approved_);
   }
 
-  /// @notice Function for mixed transfers from an operator that may be different than 'from'.
-  /// @dev This function assumes the operator is attempting to transfer an ERC-721
-  ///      if valueOrId is a possible valid token id.
+  /// @notice 用于混合转账的函数，操作者可能与from地址不同
+  /// @dev 如果valueOrId是有效的代币ID，则该函数假定操作者试图转移ERC-721代币
   function transferFrom(
     address from_,
     address to_,
@@ -225,26 +240,26 @@ abstract contract ERC404 is IERC404 {
     if (_isValidTokenId(valueOrId_)) {
       erc721TransferFrom(from_, to_, valueOrId_);
     } else {
-      // Intention is to transfer as ERC-20 token (value).
+      // 意图作为ERC-20代币（数量）转移
       return erc20TransferFrom(from_, to_, valueOrId_);
     }
 
     return true;
   }
 
-  /// @notice Function for ERC-721 transfers from.
-  /// @dev This function is recommended for ERC721 transfers.
+  /// @notice ERC-721转账函数
+  /// @dev 推荐使用此函数进行ERC721转账
   function erc721TransferFrom(
     address from_,
     address to_,
     uint256 id_
   ) public virtual {
-    // Prevent minting tokens from 0x0.
+    // 防止从0地址铸造代币
     if (from_ == address(0)) {
       revert InvalidSender();
     }
 
-    // Prevent burning tokens to 0x0.
+    // 防止销毁代币到0地址
     if (to_ == address(0)) {
       revert InvalidRecipient();
     }
@@ -253,7 +268,7 @@ abstract contract ERC404 is IERC404 {
       revert Unauthorized();
     }
 
-    // Check that the operator is either the sender or approved for the transfer.
+    // 检查操作者是发送者本人、被授权的操作者或被授权处理该代币
     if (
       msg.sender != from_ &&
       !isApprovedForAll[from_][msg.sender] &&
@@ -271,36 +286,36 @@ abstract contract ERC404 is IERC404 {
 
     // Transfer 1 * units ERC-20 and 1 ERC-721 token.
     // ERC-721 transfer exemptions handled above. Can't make it to this point if either is transfer exempt.
-    _transferERC20(from_, to_, units);
+    // 不需要调用 _transferERC20，因为 _transferERC721 内部已经调用了 _transferDeposits 来转移存款
     _transferERC721(from_, to_, id_);
   }
 
-  /// @notice Function for ERC-20 transfers from.
-  /// @dev This function is recommended for ERC20 transfers
+  /// @notice ERC-20代币的transferFrom函数
+  /// @dev 推荐使用此函数进行ERC20转账
   function erc20TransferFrom(
     address from_,
     address to_,
     uint256 value_
   ) public virtual returns (bool) {
-    // Prevent minting tokens from 0x0.
+    // 防止从0地址铸造代币
     if (from_ == address(0)) {
       revert InvalidSender();
     }
 
-    // Prevent burning tokens to 0x0.
+    // 防止销毁代币到0地址
     if (to_ == address(0)) {
       revert InvalidRecipient();
     }
 
     uint256 allowed = allowance[from_][msg.sender];
 
-    // Check that the operator has sufficient allowance.
+    // 检查操作者是否有足够的授权额度
     if (allowed != type(uint256).max) {
       allowance[from_][msg.sender] = allowed - value_;
     }
 
-    // Transferring ERC-20s directly requires the _transferERC20WithERC721 function.
-    // Handles ERC-721 exemptions internally.
+    // 直接转移ERC-20需要使用_transferERC20WithERC721函数
+    // 在函数内部处理ERC-721豁免
     return _transferERC20WithERC721(from_, to_, value_);
   }
 
@@ -354,9 +369,9 @@ abstract contract ERC404 is IERC404 {
     }
   }
 
-  /// @notice Function for EIP-2612 permits (ERC-20 only).
-  /// @dev Providing type(uint256).max for permit value results in an
-  ///      unlimited approval that is not deducted from on transfers.
+  /// @notice EIP-2612 许可函数（仅支持ERC-20）
+  /// @dev 如果permit的value值设为type(uint256).max，将产生一个无限制的授权额度，
+  ///      在转账时不会从该额度中扣除
   function permit(
     address owner_,
     address spender_,
@@ -370,8 +385,8 @@ abstract contract ERC404 is IERC404 {
       revert PermitDeadlineExpired();
     }
 
-    // permit cannot be used for ERC-721 token approvals, so ensure
-    // the value does not fall within the valid range of ERC-721 token ids.
+    // permit不能用于ERC-721代币的授权，所以要确保
+    // value值不在有效的ERC-721代币ID范围内
     if (_isValidTokenId(value_)) {
       revert InvalidApproval();
     }
@@ -466,25 +481,23 @@ abstract contract ERC404 is IERC404 {
       );
   }
 
-  /// @notice This is the lowest level ERC-20 transfer function, which
-  ///         should be used for both normal ERC-20 transfers as well as minting.
-  /// Note that this function allows transfers to and from 0x0.
+  /// @notice 这是最底层的 ERC-20 转账函数，用于普通的 ERC-20 转账和铸造
+  /// @dev 注意该函数允许与 0x0 地址之间的转账
   function _transferERC20(
     address from_,
     address to_,
     uint256 value_
   ) internal virtual {
-    // Minting is a special case for which we should not check the balance of
-    // the sender, and we should increase the total supply.
+    // 铸造是一个特殊情况，我们不需要检查发送者的余额，只需增加总供应量
     if (from_ == address(0)) {
       totalSupply += value_;
     } else {
-      // Deduct value from sender's balance.
+      // 从发送者余额中扣除金额
       balanceOf[from_] -= value_;
     }
 
-    // Update the recipient's balance.
-    // Can be unchecked because on mint, adding to totalSupply is checked, and on transfer balance deduction is checked.
+    // 更新接收者的余额
+    // 可以使用unchecked因为在铸造时已检查了totalSupply的增加，在转账时已检查了余额扣除
     unchecked {
       balanceOf[to_] += value_;
     }
@@ -492,52 +505,17 @@ abstract contract ERC404 is IERC404 {
     emit ERC20Events.Transfer(from_, to_, value_);
   }
 
-  /// @notice Consolidated record keeping function for transferring ERC-721s.
-  /// @dev Assign the token to the new owner, and remove from the old owner.
-  /// Note that this function allows transfers to and from 0x0.
-  /// Does not handle ERC-721 exemptions.
-  function _transferERC721(
-    address from_,
-    address to_,
-    uint256 id_
-  ) internal virtual {
-    // If this is not a mint, handle record keeping for transfer from previous owner.
-    if (from_ != address(0)) {
-      // On transfer of an NFT, any previous approval is reset.
-      delete getApproved[id_];
-
-      uint256 updatedId = _owned[from_][_owned[from_].length - 1];
-      if (updatedId != id_) {
-        uint256 updatedIndex = _getOwnedIndex(id_);
-        // update _owned for sender
-        _owned[from_][updatedIndex] = updatedId;
-        // update index for the moved id
-        _setOwnedIndex(updatedId, updatedIndex);
-      }
-
-      // pop
-      _owned[from_].pop();
-    }
-
-    // Check if this is a burn.
-    if (to_ != address(0)) {
-      // If not a burn, update the owner of the token to the new owner.
-      // Update owner of the token to the new owner.
-      _setOwnerOf(id_, to_);
-      // Push token onto the new owner's stack.
-      _owned[to_].push(id_);
-      // Update index for new owner's stack.
-      _setOwnedIndex(id_, _owned[to_].length - 1);
-    } else {
-      // If this is a burn, reset the owner of the token to 0x0 by deleting the token from _ownedData.
-      delete _ownedData[id_];
-    }
-
-    emit ERC721Events.Transfer(from_, to_, id_);
+  /// @notice 转移 ERC721 及其内部存储的 ERC20 资产
+  function _transferERC721(address from_, address to_, uint256 id_) internal virtual override {
+    // 转移与NFT关联的所有存款
+    _transferDeposits(id_, from_, to_);
+    
+    // 执行NFT转移
+    super._transferERC721(from_, to_, id_);
   }
 
-  /// @notice Internal function for ERC-20 transfers. Also handles any ERC-721 transfers that may be required.
-  // Handles ERC-721 exemptions.
+  /// @notice ERC-20转账的内部函数，同时处理可能需要的ERC-721转账
+  /// @dev 处理ERC-721豁免情况，默认只获取价值为1的NFT
   function _transferERC20WithERC721(
     address from_,
     address to_,
@@ -548,34 +526,24 @@ abstract contract ERC404 is IERC404 {
 
     _transferERC20(from_, to_, value_);
 
-    // Preload for gas savings on branches
     bool isFromERC721TransferExempt = erc721TransferExempt(from_);
     bool isToERC721TransferExempt = erc721TransferExempt(to_);
 
-    // Skip _withdrawAndStoreERC721 and/or _retrieveOrMintERC721 for ERC-721 transfer exempt addresses
-    // 1) to save gas
-    // 2) because ERC-721 transfer exempt addresses won't always have/need ERC-721s corresponding to their ERC20s.
     if (isFromERC721TransferExempt && isToERC721TransferExempt) {
-      // Case 1) Both sender and recipient are ERC-721 transfer exempt. No ERC-721s need to be transferred.
-      // NOOP.
+      // 情况1) 发送者和接收者都是ERC-721豁免。不需要转移ERC-721。
     } else if (isFromERC721TransferExempt) {
-      // Case 2) The sender is ERC-721 transfer exempt, but the recipient is not. Contract should not attempt
-      //         to transfer ERC-721s from the sender, but the recipient should receive ERC-721s
-      //         from the bank/minted for any whole number increase in their balance.
-      // Only cares about whole number increments.
+      // 情况2) 发送者是ERC-721豁免，接收者不是
       uint256 tokensToRetrieveOrMint = (balanceOf[to_] / units) -
         (erc20BalanceOfReceiverBefore / units);
       for (uint256 i = 0; i < tokensToRetrieveOrMint; ) {
-        _retrieveOrMintERC721(to_);
+        // 每次都只获取价值为1的NFT
+        _retrieveOrMintERC721(to_, units, true);
         unchecked {
           ++i;
         }
       }
     } else if (isToERC721TransferExempt) {
-      // Case 3) The sender is not ERC-721 transfer exempt, but the recipient is. Contract should attempt
-      //         to withdraw and store ERC-721s from the sender, but the recipient should not
-      //         receive ERC-721s from the bank/minted.
-      // Only cares about whole number increments.
+      // 情况3) 发送者不是ERC-721豁免，接收者是
       uint256 tokensToWithdrawAndStore = (erc20BalanceOfSenderBefore / units) -
         (balanceOf[from_] / units);
       for (uint256 i = 0; i < tokensToWithdrawAndStore; ) {
@@ -585,19 +553,9 @@ abstract contract ERC404 is IERC404 {
         }
       }
     } else {
-      // Case 4) Neither the sender nor the recipient are ERC-721 transfer exempt.
-      // Strategy:
-      // 1. First deal with the whole tokens. These are easy and will just be transferred.
-      // 2. Look at the fractional part of the value:
-      //   a) If it causes the sender to lose a whole token that was represented by an NFT due to a
-      //      fractional part being transferred, withdraw and store an additional NFT from the sender.
-      //   b) If it causes the receiver to gain a whole new token that should be represented by an NFT
-      //      due to receiving a fractional part that completes a whole token, retrieve or mint an NFT to the recevier.
-
-      // Whole tokens worth of ERC-20s get transferred as ERC-721s without any burning/minting.
+      // 情况4) 发送者和接收者都不是ERC-721豁免
       uint256 nftsToTransfer = value_ / units;
       for (uint256 i = 0; i < nftsToTransfer; ) {
-        // Pop from sender's ERC-721 stack and transfer them (LIFO)
         uint256 indexOfLastToken = _owned[from_].length - 1;
         uint256 tokenId = _owned[from_][indexOfLastToken];
         _transferERC721(from_, to_, tokenId);
@@ -606,18 +564,6 @@ abstract contract ERC404 is IERC404 {
         }
       }
 
-      // If the transfer changes either the sender or the recipient's holdings from a fractional to a non-fractional
-      // amount (or vice versa), adjust ERC-721s.
-
-      // First check if the send causes the sender to lose a whole token that was represented by an ERC-721
-      // due to a fractional part being transferred.
-      //
-      // Process:
-      // Take the difference between the whole number of tokens before and after the transfer for the sender.
-      // If that difference is greater than the number of ERC-721s transferred (whole units), then there was
-      // an additional ERC-721 lost due to the fractional portion of the transfer.
-      // If this is a self-send and the before and after balances are equal (not always the case but often),
-      // then no ERC-721s will be lost here.
       if (
         erc20BalanceOfSenderBefore / units - erc20BalanceOf(from_) / units >
         nftsToTransfer
@@ -625,19 +571,12 @@ abstract contract ERC404 is IERC404 {
         _withdrawAndStoreERC721(from_);
       }
 
-      // Then, check if the transfer causes the receiver to gain a whole new token which requires gaining
-      // an additional ERC-721.
-      //
-      // Process:
-      // Take the difference between the whole number of tokens before and after the transfer for the recipient.
-      // If that difference is greater than the number of ERC-721s transferred (whole units), then there was
-      // an additional ERC-721 gained due to the fractional portion of the transfer.
-      // Again, for self-sends where the before and after balances are equal, no ERC-721s will be gained here.
       if (
         erc20BalanceOf(to_) / units - erc20BalanceOfReceiverBefore / units >
         nftsToTransfer
       ) {
-        _retrieveOrMintERC721(to_);
+        // 接收者获得新的整数代币时，只获取价值为1的NFT
+        _retrieveOrMintERC721(to_, units, true);
       }
     }
 
@@ -662,44 +601,90 @@ abstract contract ERC404 is IERC404 {
     _transferERC20WithERC721(address(0), to_, value_);
   }
 
-  /// @notice Internal function for ERC-721 minting and retrieval from the bank.
-  /// @dev This function will allow minting of new ERC-721s up to the total fractional supply. It will
-  ///      first try to pull from the bank, and if the bank is empty, it will mint a new token.
-  /// Does not handle ERC-721 exemptions.
-  function _retrieveOrMintERC721(address to_) internal virtual {
+  /// @notice ERC-721代币铸造和从银行取回的内部函数
+  /// @dev 该函数允许铸造新的ERC-721代币或从银行取回代币
+  /// @param to_ 接收者地址
+  /// @param availableAmount_ 用户可用的代币数量
+  /// @param singleNFT_ true表示只接收一个NFT，false表示可以接收多个NFT
+  function _retrieveOrMintERC721(
+    address to_, 
+    uint256 availableAmount_,
+    bool singleNFT_
+  ) internal virtual {
     if (to_ == address(0)) {
-      revert InvalidRecipient();
+        revert InvalidRecipient();
     }
 
-    uint256 id;
-
-    if (!_storedERC721Ids.empty()) {
-      // If there are any tokens in the bank, use those first.
-      // Pop off the end of the queue (FIFO).
-      id = _storedERC721Ids.popBack();
+    if (singleNFT_) {
+        // 单个NFT模式：寻找价值等于availableAmount_的NFT
+        _retrieveSingleNFT(to_, availableAmount_);
     } else {
-      // Otherwise, mint a new token, should not be able to go over the total fractional supply.
-      ++minted;
-
-      // Reserve max uint256 for approvals
-      if (minted == type(uint256).max) {
-        revert MintLimitReached();
-      }
-
-      id = ID_ENCODING_PREFIX + minted;
+        // 多个NFT模式：尽可能多地获取价值为1的NFT
+        _retrieveMultipleNFTs(to_, availableAmount_);
     }
+  }
 
-    address erc721Owner = _getOwnerOf(id);
-
-    // The token should not already belong to anyone besides 0x0 or this contract.
-    // If it does, something is wrong, as this should never happen.
-    if (erc721Owner != address(0)) {
-      revert AlreadyExists();
+  // 内部函数：获取单个特定价值的NFT
+  function _retrieveSingleNFT(address to_, uint256 targetAmount_) private {
+    if (!_storedERC721Ids.empty()) {
+        // 遍历存储的ID，寻找价值匹配的
+        uint256 i = 0;
+        uint256 storedIdsLength = _storedERC721Ids.length();
+        
+        while (i < storedIdsLength) {
+            uint256 candidateId = _storedERC721Ids.at(i);
+            uint256 requiredAmount = _requiredAmount[candidateId];
+            
+            // 检查是否找到价值匹配的NFT
+            if (requiredAmount == targetAmount_ && _canRestoreNFT(candidateId)) {
+                _storedERC721Ids.remove(i);
+                _handleNFTRestore(candidateId);
+                _transferERC721(address(0), to_, candidateId);
+                return;
+            }
+            i++;
+        }
     }
+    
+    // 如果没找到匹配的且数量足够，铸造新的
+    revert InvalidAmount(); // 如果没有找到匹配价值的NFT，则回退
+  }
 
-    // Transfer the token to the recipient, either transferring from the contract's bank or minting.
-    // Does not handle ERC-721 exemptions.
-    _transferERC721(erc721Owner, to_, id);
+  // 内部函数：获取多个价值为1的NFT
+  function _retrieveMultipleNFTs(address to_, uint256 availableAmount_) private {
+    uint256 nftsToMint = availableAmount_ / units;
+    
+    for (uint256 i = 0; i < nftsToMint;) {
+        // 尝试从存储中找价值为1的NFT
+        bool found = false;
+        if (!_storedERC721Ids.empty()) {
+            uint256 j = 0;
+            uint256 storedIdsLength = _storedERC721Ids.length();
+            
+            while (j < storedIdsLength && !found) {
+                uint256 candidateId = _storedERC721Ids.at(j);
+                if (_requiredAmount[candidateId] == units && _canRestoreNFT(candidateId)) {
+                    _storedERC721Ids.remove(j);
+                    _handleNFTRestore(candidateId);
+                    _transferERC721(address(0), to_, candidateId);
+                    found = true;
+                }
+                j++;
+            }
+        }
+        
+        // 如果没找到价值为1的NFT，铸造新的
+        if (!found) {
+            ++minted;
+            if (minted == type(uint256).max) {
+                revert MintLimitReached();
+            }
+            uint256 newId = ID_ENCODING_PREFIX + minted;
+            _transferERC721(address(0), to_, newId);
+        }
+        
+        unchecked { ++i; }
+    }
   }
 
   /// @notice Internal function for ERC-721 deposits to bank (this contract).
@@ -712,6 +697,9 @@ abstract contract ERC404 is IERC404 {
 
     // Retrieve the latest token added to the owner's stack (LIFO).
     uint256 id = _owned[from_][_owned[from_].length - 1];
+
+    // 在NFT被拆分前保存存款记录
+    _handleNFTSplit(id);
 
     // Transfer to 0x0.
     // Does not handle ERC-721 exemptions.
@@ -817,5 +805,136 @@ abstract contract ERC404 is IERC404 {
     }
 
     _ownedData[id_] = data;
+  }
+
+  /// @notice 向指定的 NFT 注入 ERC20 代币
+  /// @param tokenId_ NFT的ID
+  /// @param tokenAddress_ ERC20代币的地址
+  /// @param amount_ 注入的数量
+  function depositTokens(uint256 tokenId_, address tokenAddress_, uint256 amount_) public {
+    // 验证 NFT 存在且调用者是所有者
+    address owner = _getOwnerOf(tokenId_);
+    if (owner != msg.sender) {
+      revert Unauthorized();
+    }
+
+    // 如果注入的是本代币，直接从用户余额中扣除
+    if (tokenAddress_ == address(this)) {
+      require(balanceOf[msg.sender] >= amount_, "Insufficient balance");
+      _transferERC20(msg.sender, address(this), amount_);
+    } else {
+      // 对于其他 ERC20 代币，需要先授权再转账
+      IERC20 token = IERC20(tokenAddress_);
+      require(token.transferFrom(msg.sender, address(this), amount_), "Transfer failed");
+    }
+
+    // 记录存款
+    _tokenDeposits[tokenId_].push(TokenDeposit({
+      tokenAddress: tokenAddress_,
+      amount: amount_
+    }));
+
+    emit TokensDeposited(tokenId_, tokenAddress_, amount_);
+  }
+
+  /// @notice 从指定的 NFT 中提取 ERC20 代币
+  /// @param tokenId_ NFT的ID
+  /// @param depositIndex_ 存款索引
+  function withdrawTokens(uint256 tokenId_, uint256 depositIndex_) public {
+    // 验证 NFT 存在且调用者是所有者
+    address owner = _getOwnerOf(tokenId_);
+    if (owner != msg.sender) {
+      revert Unauthorized();
+    }
+
+    // 获取存款信息
+    require(depositIndex_ < _tokenDeposits[tokenId_].length, "Invalid deposit index");
+    TokenDeposit storage deposit = _tokenDeposits[tokenId_][depositIndex_];
+    
+    uint256 amount = deposit.amount;
+    address tokenAddress = deposit.tokenAddress;
+
+    // 删除存款记录
+    _removeDeposit(tokenId_, depositIndex_);
+
+    // 如果是本代币，直接从合约转给用户
+    if (tokenAddress == address(this)) {
+      _transferERC20(address(this), msg.sender, amount);
+    } else {
+      // 对于其他 ERC20 代币
+      IERC20 token = IERC20(tokenAddress);
+      require(token.transfer(msg.sender, amount), "Transfer failed");
+    }
+
+    emit TokensWithdrawn(tokenId_, tokenAddress, amount);
+  }
+
+  /// @notice 获取指定 NFT 的所有存款信息
+  /// @param tokenId_ NFT的ID
+  function getTokenDeposits(uint256 tokenId_) public view returns (TokenDeposit[] memory) {
+    return _tokenDeposits[tokenId_];
+  }
+
+  /// @notice 内部函数：移除存款记录
+  function _removeDeposit(uint256 tokenId_, uint256 index_) internal {
+    require(index_ < _tokenDeposits[tokenId_].length, "Invalid index");
+    
+    // 将最后一个元素移到要删除的位置，然后删除最后一个元素
+    if (index_ != _tokenDeposits[tokenId_].length - 1) {
+      _tokenDeposits[tokenId_][index_] = _tokenDeposits[tokenId_][_tokenDeposits[tokenId_].length - 1];
+    }
+    _tokenDeposits[tokenId_].pop();
+  }
+
+  /// @notice 在转移 NFT 时需要确保没有存款
+  function _beforeTokenTransfer(address from_, address to_, uint256 tokenId_) internal virtual {
+    if (from_ != address(0) && to_ != address(0)) { // 排除铸造和销毁
+      require(_tokenDeposits[tokenId_].length == 0, "Must withdraw deposits before transfer");
+    }
+  }
+
+  /// @notice Transfer deposits when NFT is transferred
+  /// @dev This function should be called during NFT transfer
+  function _transferDeposits(uint256 tokenId_, address from_, address to_) internal virtual {
+    uint256 depositAmount = _tokenDeposits[tokenId_].length;
+    if (depositAmount > 0) {
+      // No need to actually move tokens since they stay in the contract
+      // Just update the accounting
+      emit TokensWithdrawn(tokenId_, _tokenDeposits[tokenId_][depositAmount - 1].tokenAddress, _tokenDeposits[tokenId_][depositAmount - 1].amount);
+      emit TokensDeposited(tokenId_, _tokenDeposits[tokenId_][depositAmount - 1].tokenAddress, _tokenDeposits[tokenId_][depositAmount - 1].amount);
+    }
+  }
+
+  /// @notice 检查是否可以恢复特定ID的NFT
+  function _canRestoreNFT(uint256 tokenId_) internal view returns (bool) {
+    if (!_isSplit[tokenId_] || _splitDeposits[tokenId_].length == 0) {
+      return true; // 如果NFT未被拆分或没有存款记录，可以直接恢复
+    }
+
+    // 检查存款金额是否满足要求
+    TokenDeposit[] storage requiredDeposits = _splitDeposits[tokenId_];
+    TokenDeposit[] storage currentDeposits = _tokenDeposits[tokenId_];
+    
+    if (currentDeposits.length == 0) return false;
+    
+    // 检查原生ERC20资产（索引0）的金额是否满足要求
+    return currentDeposits[0].amount >= requiredDeposits[0].amount;
+  }
+
+  /// @notice 在NFT被恢复时恢复存款记录
+  function _handleNFTRestore(uint256 tokenId_) internal {
+    if (_isSplit[tokenId_] && _splitDeposits[tokenId_].length > 0) {
+      require(_canRestoreNFT(tokenId_), "Insufficient deposits to restore NFT");
+      
+      // 恢复存款记录
+      delete _tokenDeposits[tokenId_];
+      for (uint256 i = 0; i < _splitDeposits[tokenId_].length; i++) {
+        _tokenDeposits[tokenId_].push(_splitDeposits[tokenId_][i]);
+      }
+      
+      // 清除拆分记录
+      delete _splitDeposits[tokenId_];
+      _isSplit[tokenId_] = false;
+    }
   }
 }
