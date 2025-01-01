@@ -1,5 +1,5 @@
 //SPDX-License-Identifier: MIT
-pragma solidity ^0.8.20;
+pragma solidity ^0.8.2;
 
 import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import {IERC404MerkleClaim} from "./IERC404MerkleClaim.sol";
@@ -32,7 +32,7 @@ abstract contract ERC404MerkleClaim is IERC404MerkleClaim {
 
   // To use, override this function in your contract, call
   // super.airdropMint(proof_) within your override function, then mint tokens.
-  function airdropMint(
+https://github.com/oftiyf/awesome404  function airdropMint(
     bytes32[] memory proof_,
     uint256 value_
   ) public virtual whenAirdropIsOpen {
