@@ -7,9 +7,10 @@ import {IERC404} from "./interfaces/IERC404.sol";
 import {DoubleEndedQueue} from "./lib/DoubleEndedQueue.sol";
 import {ERC721Events} from "./lib/ERC721Events.sol";
 import {ERC20Events} from "./lib/ERC20Events.sol";
+import {ERC404Deposits} from "./ERC404Deposits.sol";  // 确保正确导入
 import {IERC20} from "@openzeppelin/contracts/interfaces/IERC20.sol";
 
-abstract contract ERC404 is IERC404 {
+abstract contract ERC404 is IERC404,ERC404Deposits{
   using DoubleEndedQueue for DoubleEndedQueue.Uint256Deque;
 
   /// @dev The queue of ERC-721 tokens stored in the contract.
@@ -39,6 +40,9 @@ abstract contract ERC404 is IERC404 {
 
   /// @dev Initial domain separator for EIP-2612 support
   bytes32 internal immutable _INITIAL_DOMAIN_SEPARATOR;
+
+  mapping(uint256 => bool) internal _isSplit;
+
 
   /// @dev Balance of user in ERC-20 representation
   mapping(address => uint256) public balanceOf;
@@ -73,20 +77,8 @@ abstract contract ERC404 is IERC404 {
   /// @dev Constant for token id encoding
   uint256 public constant ID_ENCODING_PREFIX = 1 << 255;
 
-  /// @dev Storage for each NFT's deposits
-  struct TokenDeposit {
-    address tokenAddress;  // ERC20 代币地址
-    uint256 amount;       // 存入数量
-  }
-
-  /// @dev NFT ID => 代币存款映射
-  mapping(uint256 => TokenDeposit[]) private _tokenDeposits;
-
-  /// @dev Event for tokens deposited
-  event TokensDeposited(uint256 indexed tokenId, address indexed tokenAddress, uint256 amount);
-
-  /// @dev Event for tokens withdrawn
-  event TokensWithdrawn(uint256 indexed tokenId, address indexed tokenAddress, uint256 amount);
+  error InvalidAmount();
+  
 
   constructor(string memory name_, string memory symbol_, uint8 decimals_) {
     name = name_;
@@ -508,12 +500,12 @@ abstract contract ERC404 is IERC404 {
   }
 
   /// @notice 转移 ERC721 及其内部存储的 ERC20 资产
-  function _transferERC721(address from_, address to_, uint256 id_) internal virtual override {
+  function _transferERC721(address from_, address to_, uint256 id_) internal virtual {
     // 转移与NFT关联的所有存款
     _transferDeposits(id_, from_, to_);
     
     // 执行NFT转移
-    super._transferERC721(from_, to_, id_);
+    _transferERC721(from_, to_, id_);
   }
 
   /// @notice ERC-20转账的内部函数，同时处理可能需要的ERC-721转账
@@ -639,7 +631,7 @@ abstract contract ERC404 is IERC404 {
             
             // 检查是否找到价值匹配的NFT
             if (requiredAmount == targetAmount_ && _canRestoreNFT(candidateId)) {
-                _storedERC721Ids.remove(i);
+                _storedERC721Ids.popFront();
                 _handleNFTRestore(candidateId);
                 _transferERC721(address(0), to_, candidateId);
                 return;
@@ -666,7 +658,21 @@ abstract contract ERC404 is IERC404 {
             while (j < storedIdsLength && !found) {
                 uint256 candidateId = _storedERC721Ids.at(j);
                 if (_requiredAmount[candidateId] == units && _canRestoreNFT(candidateId)) {
-                    _storedERC721Ids.remove(j);
+                    
+                    if (j == 0) {
+                      _storedERC721Ids.popFront();
+                    } else if (j == _storedERC721Ids.length() - 1) {
+                      _storedERC721Ids.popBack();
+                    } else {
+    // 如果是中间元素，需要重新组织队列
+                      uint256 length = _storedERC721Ids.length();
+                      for (uint256 k = j; k < length - 1; k++) {
+                        uint256 nextValue = _storedERC721Ids.at(k + 1);
+                        _storedERC721Ids.popBack();
+                        _storedERC721Ids.pushFront(nextValue);
+                      }
+                      _storedERC721Ids.popBack();
+                    }
                     _handleNFTRestore(candidateId);
                     _transferERC721(address(0), to_, candidateId);
                     found = true;
@@ -739,7 +745,7 @@ abstract contract ERC404 is IERC404 {
 
     for (uint256 i = 0; i < expectedERC721Balance - actualERC721Balance; ) {
       // Transfer ERC721 balance in from pool
-      _retrieveOrMintERC721(target_);
+      _retrieveOrMintERC721(target_, 1, true);
       unchecked {
         ++i;
       }
@@ -835,14 +841,12 @@ abstract contract ERC404 is IERC404 {
       tokenAddress: tokenAddress_,
       amount: amount_
     }));
-
-    emit TokensDeposited(tokenId_, tokenAddress_, amount_);
   }
 
   /// @notice 从指定的 NFT 中提取 ERC20 代币
   /// @param tokenId_ NFT的ID
   /// @param depositIndex_ 存款索引
-  function withdrawTokens(uint256 tokenId_, uint256 depositIndex_) public {
+  function withdrawTokens(uint256 tokenId_, uint256 depositIndex_) public override {
     // 验证 NFT 存在且调用者是所有者
     address owner = _getOwnerOf(tokenId_);
     if (owner != msg.sender) {
@@ -867,18 +871,16 @@ abstract contract ERC404 is IERC404 {
       IERC20 token = IERC20(tokenAddress);
       require(token.transfer(msg.sender, amount), "Transfer failed");
     }
-
-    emit TokensWithdrawn(tokenId_, tokenAddress, amount);
   }
 
   /// @notice 获取指定 NFT 的所有存款信息
   /// @param tokenId_ NFT的ID
-  function getTokenDeposits(uint256 tokenId_) public view returns (TokenDeposit[] memory) {
+  function getTokenDeposits(uint256 tokenId_) public view override returns (TokenDeposit[] memory) {
     return _tokenDeposits[tokenId_];
   }
 
   /// @notice 内部函数：移除存款记录
-  function _removeDeposit(uint256 tokenId_, uint256 index_) internal {
+  function _removeDeposit(uint256 tokenId_, uint256 index_) internal override {
     require(index_ < _tokenDeposits[tokenId_].length, "Invalid index");
     
     // 将最后一个元素移到要删除的位置，然后删除最后一个元素
@@ -897,7 +899,7 @@ abstract contract ERC404 is IERC404 {
 
   /// @notice Transfer deposits when NFT is transferred
   /// @dev This function should be called during NFT transfer
-  function _transferDeposits(uint256 tokenId_, address from_, address to_) internal virtual {
+  function _transferDeposits(uint256 tokenId_, address from_, address to_) internal virtual override {
     uint256 depositAmount = _tokenDeposits[tokenId_].length;
     if (depositAmount > 0) {
       // No need to actually move tokens since they stay in the contract
@@ -908,7 +910,7 @@ abstract contract ERC404 is IERC404 {
   }
 
   /// @notice 检查是否可以恢复特定ID的NFT
-  function _canRestoreNFT(uint256 tokenId_) internal view returns (bool) {
+  function _canRestoreNFT(uint256 tokenId_) internal view override returns (bool) {
     if (!_isSplit[tokenId_] || _splitDeposits[tokenId_].length == 0) {
       return true; // 如果NFT未被拆分或没有存款记录，可以直接恢复
     }
@@ -924,7 +926,7 @@ abstract contract ERC404 is IERC404 {
   }
 
   /// @notice 在NFT被恢复时恢复存款记录
-  function _handleNFTRestore(uint256 tokenId_) internal {
+  function _handleNFTRestore(uint256 tokenId_) internal override {
     if (_isSplit[tokenId_] && _splitDeposits[tokenId_].length > 0) {
       require(_canRestoreNFT(tokenId_), "Insufficient deposits to restore NFT");
       
@@ -938,5 +940,18 @@ abstract contract ERC404 is IERC404 {
       delete _splitDeposits[tokenId_];
       _isSplit[tokenId_] = false;
     }
+  }
+
+  function _isOwner(address owner_, uint256 tokenId_) internal override returns (bool) {
+    return _getOwnerOf(tokenId_) == owner_;
+  }
+
+  function _transfer(address from_, address to_, uint256 amount_) internal override returns (bool) {
+    _transferERC20(from_, to_, amount_);
+    return true;
+  }
+
+  function _transferFromSender(address from_, address to_, uint256 amount_) internal override returns (bool) {
+    return _transferERC20WithERC721(from_, to_, amount_);
   }
 }
