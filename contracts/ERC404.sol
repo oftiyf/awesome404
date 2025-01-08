@@ -237,6 +237,8 @@ abstract contract ERC404 is IERC404 {
     address to_,
     uint256 valueOrId_
   ) public virtual returns (bool) {
+    // 检查valueOrId_是否为有效的NFT代币ID
+    // 如果是有效ID，则按ERC721代币方式处理转账
     if (_isValidTokenId(valueOrId_)) {
       erc721TransferFrom(from_, to_, valueOrId_);
     } else {

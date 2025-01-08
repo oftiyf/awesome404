@@ -50,23 +50,22 @@ abstract contract ERC721Receiver {
 }
 
 /// @notice ERC404
-///         A gas-efficient, mixed ERC20 / ERC721 implementation
-///         with native liquidity and fractionalization.
+///         一个高效的混合ERC20/ERC721实现
+///         具有原生流动性和分数化功能。
 ///
-///         This is an experimental standard designed to integrate
-///         with pre-existing ERC20 / ERC721 support as smoothly as
-///         possible.
+///         这是一个实验性标准,旨在与现有的ERC20/ERC721支持
+///         尽可能平滑地集成。
 ///
-/// @dev    In order to support full functionality of ERC20 and ERC721
-///         supply assumptions are made that slightly constraint usage.
-///         Ensure decimals are sufficiently large (standard 18 recommended)
-///         as ids are effectively encoded in the lowest range of amounts.
+/// @dev    为了支持ERC20和ERC721的完整功能,
+///         对供应做出了一些假设,这些假设略微限制了使用。
+///         确保小数位数足够大(建议使用标准的18位),
+///         因为ID实际上被编码在金额的最低范围内。
 ///
-///         NFTs are spent on ERC20 functions in a FILO queue, this is by
-///         design.
+///         NFT在ERC20功能中以FILO队列的方式使用,
+///         这是设计使然。
 ///
 abstract contract ERC404Legacy is Ownable {
-  // Events
+  // 事件
   event ERC20Transfer(address indexed from, address indexed to, uint256 amount);
   event Approval(
     address indexed owner,
@@ -85,55 +84,55 @@ abstract contract ERC404Legacy is Ownable {
     bool approved
   );
 
-  // Errors
+  // 错误
   error NotFound();
   error AlreadyExists();
   error InvalidRecipient();
   error InvalidSender();
   error UnsafeRecipient();
 
-  // Metadata
-  /// @dev Token name
+  // 元数据
+  /// @dev 代币名称
   string public name;
 
-  /// @dev Token symbol
+  /// @dev 代币符号
   string public symbol;
 
-  /// @dev Decimals for fractional representation
+  /// @dev 分数表示的小数位数
   uint8 public immutable decimals;
 
-  /// @dev Total supply in fractionalized representation
+  /// @dev 分数表示的总供应量
   uint256 public immutable totalSupply;
 
-  /// @dev Current mint counter, monotonically increasing to ensure accurate ownership
+  /// @dev 当前铸造计数器,单调递增以确保准确的所有权
   uint256 public minted;
 
-  // Mappings
-  /// @dev Balance of user in fractional representation
+  // 映射
+  /// @dev 用户在分数表示下的余额
   mapping(address => uint256) public balanceOf;
 
-  /// @dev Allowance of user in fractional representation
+  /// @dev 用户在分数表示下的授权额度
   mapping(address => mapping(address => uint256)) public allowance;
 
-  /// @dev Approval in native representaion
+  /// @dev 原生表示下的授权
   mapping(uint256 => address) public getApproved;
 
-  /// @dev Approval for all in native representation
+  /// @dev 原生表示下的全部授权
   mapping(address => mapping(address => bool)) public isApprovedForAll;
 
-  /// @dev Owner of id in native representation
+  /// @dev 原生表示下的ID所有者
   mapping(uint256 => address) internal _ownerOf;
 
-  /// @dev Array of owned ids in native representation
+  /// @dev 原生表示下拥有的ID数组
   mapping(address => uint256[]) internal _owned;
 
-  /// @dev Tracks indices for the _owned mapping
+  /// @dev _owned映射的索引跟踪
   mapping(uint256 => uint256) internal _ownedIndex;
 
-  /// @dev Addresses whitelisted from minting / burning for gas savings (pairs, routers, etc)
+  /// @dev 白名单地址(交易对、路由器等)可以跳过铸造/销毁以节省gas
   mapping(address => bool) public whitelist;
 
-  // Constructor
+  // 构造函数
   constructor(
     string memory _name,
     string memory _symbol,
@@ -147,13 +146,13 @@ abstract contract ERC404Legacy is Ownable {
     totalSupply = _totalNativeSupply * (10 ** decimals);
   }
 
-  /// @notice Initialization function to set pairs / etc
-  ///         saving gas by avoiding mint / burn on unnecessary targets
+  /// @notice 初始化函数用于设置交易对等
+  ///         通过避免对不必要目标的铸造/销毁来节省gas
   function setWhitelist(address target, bool state) public onlyOwner {
     whitelist[target] = state;
   }
 
-  /// @notice Function to find owner of a given native token
+  /// @notice 查找给定原生代币的所有者的函数
   function ownerOf(uint256 id) public view virtual returns (address owner) {
     owner = _ownerOf[id];
 
@@ -162,11 +161,11 @@ abstract contract ERC404Legacy is Ownable {
     }
   }
 
-  /// @notice tokenURI must be implemented by child contract
+  /// @notice tokenURI必须由子合约实现
   function tokenURI(uint256 id) public view virtual returns (string memory);
 
-  /// @notice Function for token approvals
-  /// @dev This function assumes id / native if amount less than or equal to current max id
+  /// @notice 代币授权函数
+  /// @dev 如果数量小于或等于当前最大ID,则此函数假定为ID/原生代币
   function approve(
     address spender,
     uint256 amountOrId
@@ -190,15 +189,15 @@ abstract contract ERC404Legacy is Ownable {
     return true;
   }
 
-  /// @notice Function native approvals
+  /// @notice 原生代币授权函数
   function setApprovalForAll(address operator, bool approved) public virtual {
     isApprovedForAll[msg.sender][operator] = approved;
 
     emit ApprovalForAll(msg.sender, operator, approved);
   }
 
-  /// @notice Function for mixed transfers
-  /// @dev This function assumes id / native if amount less than or equal to current max id
+  /// @notice 混合转账函数
+  /// @dev 如果数量小于或等于当前最大ID,则此函数假定为ID/原生代币
   function transferFrom(
     address from,
     address to,
@@ -230,16 +229,16 @@ abstract contract ERC404Legacy is Ownable {
       _ownerOf[amountOrId] = to;
       delete getApproved[amountOrId];
 
-      // update _owned for sender
+      // 更新发送者的_owned
       uint256 updatedId = _owned[from][_owned[from].length - 1];
       _owned[from][_ownedIndex[amountOrId]] = updatedId;
-      // pop
+      // 弹出
       _owned[from].pop();
-      // update index for the moved id
+      // 更新移动ID的索引
       _ownedIndex[updatedId] = _ownedIndex[amountOrId];
-      // push token to owned
+      // 将代币推送到接收者的owned
       _owned[to].push(amountOrId);
-      // update index for to owned
+      // 更新接收者owned的索引
       _ownedIndex[amountOrId] = _owned[to].length - 1;
 
       emit Transfer(from, to, amountOrId);
@@ -254,12 +253,12 @@ abstract contract ERC404Legacy is Ownable {
     }
   }
 
-  /// @notice Function for fractional transfers
+  /// @notice 分数转账函数
   function transfer(address to, uint256 amount) public virtual returns (bool) {
     return _transfer(msg.sender, to, amount);
   }
 
-  /// @notice Function for native transfers with contract support
+  /// @notice 支持合约的原生转账函数
   function safeTransferFrom(
     address from,
     address to,
@@ -276,7 +275,7 @@ abstract contract ERC404Legacy is Ownable {
     }
   }
 
-  /// @notice Function for native transfers with contract support and callback data
+  /// @notice 支持合约的原生转账函数,带回调数据
   function safeTransferFrom(
     address from,
     address to,
@@ -294,7 +293,7 @@ abstract contract ERC404Legacy is Ownable {
     }
   }
 
-  /// @notice Internal function for fractional transfers
+  /// @notice 内部分数转账函数
   function _transfer(
     address from,
     address to,
@@ -310,7 +309,7 @@ abstract contract ERC404Legacy is Ownable {
       balanceOf[to] += amount;
     }
 
-    // Skip burn for certain addresses to save gas
+    // 对某些地址跳过销毁以节省gas
     if (!whitelist[from]) {
       uint256 tokens_to_burn = (balanceBeforeSender / unit) -
         (balanceOf[from] / unit);
@@ -319,7 +318,7 @@ abstract contract ERC404Legacy is Ownable {
       }
     }
 
-    // Skip minting for certain addresses to save gas
+    // 对某些地址跳过铸造以节省gas
     if (!whitelist[to]) {
       uint256 tokens_to_mint = (balanceOf[to] / unit) -
         (balanceBeforeReceiver / unit);
@@ -332,7 +331,7 @@ abstract contract ERC404Legacy is Ownable {
     return true;
   }
 
-  // Internal utility logic
+  // 内部工具逻辑
   function _getUnit() internal view returns (uint256) {
     return 10 ** decimals;
   }
