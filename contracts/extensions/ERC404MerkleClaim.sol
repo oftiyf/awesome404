@@ -32,7 +32,8 @@ abstract contract ERC404MerkleClaim is IERC404MerkleClaim {
 
   // To use, override this function in your contract, call
   // super.airdropMint(proof_) within your override function, then mint tokens.
-https://github.com/oftiyf/awesome404  function airdropMint(
+//https://github.com/oftiyf/awesome404  
+function airdropMint(
     bytes32[] memory proof_,
     uint256 value_
   ) public virtual whenAirdropIsOpen {

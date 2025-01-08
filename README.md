@@ -1,39 +1,66 @@
-# ERC404 Implementation
+## Foundry
 
-This is an implementation of the ERC404 standard, which combines features of ERC20 and ERC721 tokens.
+**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
 
-## Known Issues and Limitations
+Foundry consists of:
 
-### 1. Lack of Randomness
-- Currently, the protocol does not implement any random number generation mechanism
-- NFT IDs are assigned sequentially using a deterministic approach
-- This could lead to predictable outcomes in:
-  - NFT minting sequences
-  - Token distribution patterns
-  - Recovery of specific NFT IDs
+-   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
+-   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
+-   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
+-   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
 
-### 2. Gas Optimization Issues
-- The current implementation has suboptimal search algorithms
-- High gas consumption in several key operations:
-  - Linear search through stored NFT IDs
-  - Inefficient iteration when recovering multiple NFTs
-  - Repeated array operations in token transfers
-- These inefficiencies particularly impact:
-  - Large-scale token transfers
-  - NFT recovery operations
-  - Batch processing of tokens
+## Documentation
 
-## Future Improvements
-1. Implement a secure random number generation mechanism
-2. Optimize search algorithms using more efficient data structures
-3. Reduce gas costs through better storage management
-4. Implement batch processing optimizations
+https://book.getfoundry.sh/
 
-## Contributing
-Contributions to address these issues are welcome. Please submit pull requests with:
-- Gas optimization improvements
-- Random number generation implementations
-- Algorithm efficiency enhancements
+## Usage
 
-## License
-MIT
+### Build
+
+```shell
+$ forge build
+```
+
+### Test
+
+```shell
+$ forge test
+```
+
+### Format
+
+```shell
+$ forge fmt
+```
+
+### Gas Snapshots
+
+```shell
+$ forge snapshot
+```
+
+### Anvil
+
+```shell
+$ anvil
+```
+
+### Deploy
+
+```shell
+$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
+```
+
+### Cast
+
+```shell
+$ cast <subcommand>
+```
+
+### Help
+
+```shell
+$ forge --help
+$ anvil --help
+$ cast --help
+```

@@ -9,15 +9,16 @@ abstract contract ERC404Deposits {
         address tokenAddress;  // ERC20代币地址
         uint256 amount;       // 存入数量
     }
+    mapping(uint256 => TokenDeposit[]) internal _splitDeposits;
+
 
     /// @dev NFT ID => 代币存款数组的映射
     /// @dev 数组索引0位置存储原生ERC20资产，其他位置预留给未来可能的扩展
-    mapping(uint256 => TokenDeposit[]) private _tokenDeposits;
+    mapping(uint256 => TokenDeposit[]) internal _tokenDeposits;
 
     /// @dev NFT ID => 所需的最小ERC20数量
     /// @dev 当NFT被拆分时，记录其中注入的资产数量，任何人凑够这个数量都可以获得该ID
-    mapping(uint256 => uint256) private _requiredAmount;
-
+    mapping(uint256 => uint256) internal _requiredAmount;
     /// @dev 事件定义
     event TokensDeposited(uint256 indexed tokenId, address indexed tokenAddress, uint256 amount);
     event TokensWithdrawn(uint256 indexed tokenId, address indexed tokenAddress, uint256 amount);
@@ -49,7 +50,7 @@ abstract contract ERC404Deposits {
 
     /// @notice 获取指定NFT的所有存款信息
     /// @param tokenId_ NFT的ID
-    function getTokenDeposits(uint256 tokenId_) public view returns (TokenDeposit[] memory) {
+    function getTokenDeposits(uint256 tokenId_) public view virtual returns (TokenDeposit[] memory) {
         return _tokenDeposits[tokenId_];
     }
 
@@ -101,7 +102,7 @@ abstract contract ERC404Deposits {
     }
 
     /// @notice 移除指定索引的存款记录
-    function _removeDeposit(uint256 tokenId_, uint256 index_) internal {
+    function _removeDeposit(uint256 tokenId_, uint256 index_) internal virtual {
         TokenDeposit[] storage deposits = _tokenDeposits[tokenId_];
         require(index_ < deposits.length, "Invalid index");
         
@@ -130,7 +131,7 @@ abstract contract ERC404Deposits {
 
     /// @notice 检查是否可以恢复特定ID的NFT
     /// @dev 任何人只要有足够的代币都可以获得这个ID
-    function _canRestoreNFT(uint256 tokenId_) internal view returns (bool) {
+    function _canRestoreNFT(uint256 tokenId_)  internal view virtual returns (bool) {
         uint256 requiredAmount = _requiredAmount[tokenId_];
         if (requiredAmount == 0) {
             return true; // 如果没有要求的数量，可以直接恢复
@@ -144,7 +145,7 @@ abstract contract ERC404Deposits {
     }
 
     /// @notice 在NFT被恢复时处理记录
-    function _handleNFTRestore(uint256 tokenId_) internal {
+    function _handleNFTRestore(uint256 tokenId_) internal virtual {
         uint256 requiredAmount = _requiredAmount[tokenId_];
         if (requiredAmount > 0) {
             require(_canRestoreNFT(tokenId_), "Insufficient deposits to restore NFT");
